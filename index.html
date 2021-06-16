@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Copy Line By Line</title>
+
+  <!-- -- Styling -- -->
+  <!-- Bootstrap styles -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.1/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-+0n0xVW2eSR5OomGNYDnhzAbDsOXxcvSN1TPprVMTNDbiYZCxYbOOl7+AMvyTG2x" crossorigin="anonymous">
+
+  <!-- Custom Styles -->
+  <style>
+    /* Left align text in the file line buttons */
+    .file-line {
+      text-align: left;
+    }
+
+    /* Lower the main body so the navbar doesn't cover it up */
+    .main-body {
+      margin-top: 4em;
+    }
+
+    /* Handle toast placement */
+    /* https://gist.github.com/douglasmiranda/cdccaafdead9ff542c2f697a2421de8d */
+    .toast-container {
+      position: fixed;
+      right: 10px;
+      top: 5em;
+    }
+    .toast:not(.showing):not(.show) {
+      display: none !important;
+    }
+  </style>
+
+  <!-- -- Element Templates -- -->
+  <!-- File line button -->
+  <template id="file-line-template">
+    <button type="button" class="file-line btn btn-outline-dark"></button>
+  </template>
+
+  <!-- Toasts -->
+  <template id="toast-template">
+    <div class="toast" role="alert" aria-live="assertive" aria-atomic="true">
+      <div class="toast-header">
+        <strong class="toast-title me-auto"></strong>
+        <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+      </div>
+      <div class="toast-body"></div>
+    </div>
+  </template>
+</head>
+<body>
+  <!-- -- Toast Container -- -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- -- Header -- -->
+  <!-- All site controls go here -->
+  <nav class="navbar navbar-expand-md navbar-dark fixed-top bg-dark">
+    <div class="container-fluid">
+      <div class="navbar-brand" href="#">Copy By Line</div>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navbarCollapse">
+        <ul class="navbar-nav me-auto mb-2 mb-md-0">
+          <li>
+            <input type="file" class="form-control" id="file-input">
+          </li>
+          <li>
+            <button type="button" class="btn btn-primary" id="start-button" onclick="handleProcessFileClick()">Process File</button>
+          </li>
+        </ul>
+        <form class="d-flex">
+          <input type="text" class="form-control font-monospace" id="exclude-regex" placeholder="Exclude regex..." aria-label="Exclude regex">
+        </form>
+      </div>
+    </div>
+  </nav>
+  
+  <!-- -- Main Body --- -->
+  <!-- Container for file lines -->
+  <div class="main-body container">
+    <div class="d-grid gap-0 fs-5" id="file-line-container">
+      <!-- Help text is shown by default -->
+      <p>
+        To get started, choose a file and select "Process File". Each line of the file will be turned into a clickable button that will copy the text of that line to your clipboard
+      </p>
+      <p>
+        Use the "Exclude regex..." field to remove any text from the file that matches the provided regular expression during processing. The app will save the expression you enter between sessions
+      </p>
+      <p>
+        Useful regular expressions:
+      </p>
+      <code>
+        <ul>
+          <li>([A-D])\)&nbsp;</li>
+        </ul>
+      </code>
+      <p class="fs-6">
+        <a href=https://github.com/Trifoia/copy-line-by-line>GitHub Repository</a>
+      </p>
+    </div>
+  </div>
+
+  <!-- -- Scripts -- -->
+  <!-- Bootstrap Scripts -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.1/dist/js/bootstrap.bundle.min.js" integrity="sha384-gtEjrD/SeCtmISkJkNUaaKMoLD0//ElJ19smozuHV6z3Iehds+3Ulb9Bn9Plx0x4" crossorigin="anonymous"></script>
+
+  <!-- Custom Scripts -->
+  <script>
+    const TOAST_DELAY = 1000;
+    const FILE_LINE_STYLE = 'btn-outline-dark';
+    const LATEST_FILE_LINE_STYLES = ['btn-success', 'btn-outline-success'];
+
+    const excludeRegexInput = document.getElementById('exclude-regex');
+    const fileInput = document.getElementById('file-input');
+    const fileLineContainer = document.getElementById('file-line-container');
+    const fileLineTemplate = document.getElementById('file-line-template');
+    const toastContainer = document.getElementById('toast-container');
+    const toastTemplate = document.getElementById('toast-template');
+
+    let lastFileLines = [];
+    let lastFileLine = null;
+
+    /**
+     * Async helper resolves with the contents of a file
+     */
+    async function readFileAsync(file) {
+      return new Promise((resolve, reject) => {
+        let reader = new FileReader();
+        reader.onload = () => {
+          resolve(reader.result);
+        };
+        reader.onerror = reject;
+        reader.readAsText(file, "UTF-8");
+      })
+    }
+
+    /**
+     * Helper clears the body content
+     */
+     function clearBody() {
+      fileLineContainer.innerHTML = '';
+    };
+
+    /**
+     * Helper takes a line of text and uses it to generate a file line button
+     */
+    function generateButton(lineText) {
+      const clone = fileLineTemplate.content.cloneNode(true);
+      const newButton = clone.querySelector('button');
+      newButton.textContent = lineText;
+      newButton.addEventListener('click', handleFileLineClick);
+
+      return newButton;
+    }
+
+    /**
+     * Helper presents a toast to the user
+     */
+    function toast(title, body) {
+      // Create the toast and get important components
+      const clone = toastTemplate.content.cloneNode(true);
+      const toastDiv = clone.querySelector('div.toast');
+      const toastTitle = clone.querySelector('strong.toast-title');
+      const toastBody = clone.querySelector('div.toast-body');
+
+      // Set component values
+      toastTitle.textContent = title;
+      toastBody.textContent = body;
+
+      // Add the toast to the toast container
+      toastContainer.appendChild(toastDiv);
+
+      // Actually show the toast using the bootstrap API
+      const bootstrapToast = new bootstrap.Toast(toastDiv, {delay: TOAST_DELAY});
+      bootstrapToast.show();
+
+      // Remove the toast from the DOM entirely after a while
+      setTimeout(() => {
+        toastDiv.remove();
+      }, TOAST_DELAY * 2)
+    }
+
+    /**
+     * Handler writes the text content of the event target to the clipboard
+     */
+    async function handleFileLineClick(event) {
+      // Write the value to the clipboard
+      const {target} = event;
+      const targetValue = target.textContent;
+      await navigator.clipboard.writeText(targetValue);
+      toast('Copied to clipboard', targetValue);
+
+      // Reset styles for tracked file lines
+      lastFileLines.forEach((fileLine, index) => {
+        fileLine.classList.remove(LATEST_FILE_LINE_STYLES[index]);
+        fileLine.classList.add(FILE_LINE_STYLE);
+      });
+
+      // Save this file line
+      lastFileLines.unshift(target);
+
+      // Stop tracking old file lines
+      const styleCount = LATEST_FILE_LINE_STYLES.length;
+      while (lastFileLines.length > styleCount) {
+        lastFileLines.pop();
+      }
+
+      // Apply appropriate styles to tracked file lines
+      lastFileLines.forEach((fileLine, index) => {
+        fileLine.classList.remove(FILE_LINE_STYLE);
+        fileLine.classList.add(LATEST_FILE_LINE_STYLES[index]);
+      });
+    }
+
+    /**
+     * Handler processes the chosen file by generating a button for each line in the file that,
+     * when pressed, will copy the contents of that line to the clipboard
+     */
+    async function handleProcessFileClick() {
+      // 1. Get the file
+      const file = fileInput.files[0];
+      if (!file) {
+        alert('No file selected!');
+        return;
+      }
+      let text = await readFileAsync(file);
+
+      // 2. Clear the existing body
+      clearBody();
+
+      // 3. Strip out any values caught in the exclude regex
+      const excludeRegexStr = excludeRegexInput.value;
+      if (excludeRegexStr) {
+        text = text.replace(RegExp(excludeRegexStr, 'g'), '')
+      }
+      
+      // 4. Generate buttons for each line in the file
+      const textLines = text.replace(/\r\n/g, '\n').split('\n');
+      const fileLineButtons = textLines.map(textLine => generateButton(textLine));
+      
+      // 5. Apply the buttons to the body
+      fileLineButtons.forEach(fileLineButton => fileLineContainer.appendChild(fileLineButton));
+    };
+
+    /**
+     * Handles any change of the exclude regex input by saving it to local storage
+     */
+    function handleExcludeRegexInput(event) {
+      localStorage.setItem('excludeRegex', event.target.value);
+    }
+
+    /**
+     * Page initialization
+     */
+    (() => {
+      // Try to apply the exclude regex from local storage
+      excludeRegexInput.value = localStorage.getItem('excludeRegex') || '';
+
+      // Apply the exclude regex input handler
+      excludeRegexInput.addEventListener('input', handleExcludeRegexInput);
+    })();
+  </script>
+</body>
+</html>
